@@ -3,7 +3,7 @@ const knex = require('../config/knex');
 
 // Bind the knex instance to Objection.js
 Model.knex(knex);
-
+ 
 class BaseModel extends Model {
   $beforeInsert() {
     this.created_at = new Date().toISOString();
