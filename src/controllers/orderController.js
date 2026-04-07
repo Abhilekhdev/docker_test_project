@@ -9,7 +9,7 @@ class OrderController {
       res.status(500).json({ success: false, error: error.message });
     }
   }
-
+  
   static async createOrder(req, res) {
     try {
       const { user_id, product_id, quantity } = req.body;
