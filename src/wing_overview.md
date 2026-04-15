@@ -178,6 +178,40 @@ Neeche **primary** columns + FKs; har table par **`migrationDefaults`** wale aud
 
 **Important:** **`offering`** = "menu pe kya book ho sakta hai". **`experience_offering`** = "user ne **actually** kya book kiya / hold kiya". Dono alag hain.
 
+#### 7.0a) Kahani jaisa flow — user ka data kahan-kahan jata hai
+
+**Step 1 — Pehli baar app khola (signup):**  
+User ne mobile par email/password se account banaya -> **Auth0** par identity. Phir app **`POST /user`** call karti hai -> **`user`** table mein **ek row**: naam, email, DOB, baad mein **Stripe customer id**, **push_tokens** (Expo), terms accept. **Yahi tumhara "logged-in user" ka ghar hai** — jo bhi account-level cheez hai (password Auth0 pe, profile photo URL **`profile`** mein).
+
+**Step 2 — "Main kaun hoon" (dater persona):**  
+User ne onboarding form bhara -> **`POST /profile`** -> **`profile`** table: **`user_id`** tumhara, **`profile_type_id`** = dater (seed se aaya UUID), **`profile_answers`** JSON mein personality / food prefs. **User ka "character" yahan hai**, **`user`** table mein sirf identity.
+
+**Step 3 — Search (abhi booking nahi):**  
+App **`POST /experience/search`** karti hai. Backend **`offering`** (catalog) + scoring read karta hai — Resy restaurants, Viator activities, Wing inventory. **Is step par naya booking row nahi** — sirf suggestions. **`offering`** rows pehle se bani hoti hain (admin / Resy job / Viator).
+
+**Step 4 — User ne "haan, yeh plan" choose kiya:**  
+App **`experience`** banati hai — **ek outing container**: start/end time, party size, departure lat/lng, timezone. **Yeh row = "meri date / outing ka frame"**. Phir har part (dinner + activity) ke liye alag-alag **`experience_offering`** rows — **har row = ek booked slot**.
+
+**Step 5 — Restaurant book vs Activity book (data same jagah):**  
+Dono cases mein **flow same tables** use karte hain:
+
+- **Restaurant (dinner):** Catalog mein jo **`offering`** hai uska **`type_id`** / linked **`profile_type`** restaurant/resy side se match hota hai; **`offering`** ke saath **`location`** (pata) aur kabhi **`restaurant`** table (cuisine, phone, Resy link) jude hote hain. Jab user book karta hai -> **`experience_offering`** row: **`offering_id`** = wahi restaurant offering, **`start_time`/`end_time`**, costs, **`confirmed_status`**. **Restaurant-specific extra** = **`restaurant`** table ( **`offering_id`** se link ), **booking line** phir bhi **`experience_offering`** hi hai.
+
+- **Activity (Viator / Wing activity):** Catalog **`offering`** activity type ki hoti hai ( **`external_id`** jaise `viator:...` ). Book karte waqt **wahi** **`experience_offering`** — **`offering_id`** activity wali offering point karti hai. **`viator_activity_patch`** optional admin tweaks ke liye; **actual booked slot** = **`experience_offering`**.
+
+**Short:** **Restaurant ya Activity** — dono **pehle `offering` (catalog)** par aate hain; user ne jo **commit** kiya **wo `experience_offering`** mein lock hota hai. Alag table isliye nahi kyunki product ne **ek hi booking model** rakha hai.
+
+**Step 6 — Paisa:**  
+Payment hold/charge -> **`transaction`** table: **`experience_offering_id`** se jude, Stripe **`external_id`**, amounts. **User ke card** = Stripe Customer **`user`** par; **provider payout** alag **`payment_method`** (Connect) provider profile par.
+
+**Step 7 — Trip ke baad:**  
+Review -> **`experience_review`** (`experience_id` + `user_id` + answers). **Push reminders** -> **`notification`** rows (time pe job bhejti hai).
+
+**Step 8 — Plus-one:**  
+Guest add -> **`experience_guest`** (`user_id` + `experience_id`).
+
+**Ek line summary:** **`user`** = kaun hai | **`profile`** = uska taste/persona | **`offering`** = market mein kya available hai | **`experience` + `experience_offering`** = usne **kya book kiya** | **`transaction`** = uske paise | **`notification` / `experience_review`** = baad ki cheezein.
+
 ---
 
 ### 7.1 `user`
