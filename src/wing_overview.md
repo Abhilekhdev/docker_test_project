@@ -154,11 +154,39 @@ PostgreSQL extensions (migrations se): **`uuid-ossp`**, **`cube`**, **`earthdist
 
 Neeche **primary** columns + FKs; har table par **`migrationDefaults`** wale audit/soft-delete columns bhi hain (section 6.3).
 
+### 7.0) Har table - business meaning (kis ka data, kyun hai)
+
+| Table | Simple meaning | Typical data source |
+|-------|------------------|---------------------|
+| **`user`** | App par login / signup karne wale **end-user** ka Wing-side record (Auth0 se link) | Mobile signup -> Auth0 pe account -> **`POST /user`** se yahan row; baad mein **`PUT /user`** etc. |
+| **`profile_type`** | "Dater", "Restaurant", "Activity" jaise **categories** + questionnaire JSON | Zyada tar **seed / admin**; app read-only **`GET /profiletype`** |
+| **`profile`** | Ussi **`user`** ka **persona** (answers, photo, fee) - kaunsa type (dater / provider) | Mobile **`POST /profile`**, **`PATCH /profile/answers`** |
+| **`offering`** | **Catalog item** - book karne layak restaurant ya activity (inventory), **booking nahi** | Admin tools, **`wingapp-restaurants-job`** (Resy sync), Viator/API se bharata data |
+| **`location`** | Address + lat/lng - **kis offering / profile** se jude | API create/update; Resy job bhi location likh sakta hai |
+| **`experience`** | User ne jo **outing plan** banaya - time window, party, departure point | Mobile booking flow -> **`experience`** row |
+| **`experience_offering`** | **Asli booking line** - is experience mein **kaun si offering**, kab, kitna charge, status | **`Ye booking / reservation slot hai`** - `offering` sirf catalog; yahan user ne **book** kiya |
+| **`transaction`** | Stripe payment (hold/charge) **us booking line** se jude | API Stripe calls ke baad |
+| **`payment_method`** | Stripe Connect - **provider** (restaurant/activity profile) ka payout account | Provider onboarding endpoints |
+| **`notification`** | Push notification **queue** - kab bhejna hai, kya text | API future rows likhti hai; **`wingapp-notifications-job`** bhejti hai |
+| **`experience_review`** | Trip ke baad **rating / feedback** | Mobile review submit |
+| **`external_profile`** | Yelp jaise **3rd party** se aaya hua extra business data | API enrichment |
+| **`edit_experience_offering`** | Pehle booking ko **badalne** ka proposal (admin/user confirm flow) | Admin / email link confirm |
+| **`experience_guest`** | Same outing par **aur users** (plus-one) | Mobile guest join/leave |
+| **`restaurant`** | Restaurant-specific fields **offering** ke saath (Resy) | Job + admin |
+| **`viator_activity_patch`** | Viator product par **admin override** | Admin dashboard |
+| **`terms`** | T&C **version** text | Admin / legal; app **`GET /terms`** |
+
+**Important:** **`offering`** = "menu pe kya book ho sakta hai". **`experience_offering`** = "user ne **actually** kya book kiya / hold kiya". Dono alag hain.
+
 ---
 
 ### 7.1 `user`
 
 **Purpose:** Wing app user; **`external_id`** = Auth0 `user_id`.
+
+**Yeh table kya hai:** Mobile (ya web) se jo user **signup / login** karta hai, pehle Auth0 par identity banti hai; phir **`POST /user`** se **yahi table** mein naam, email, DOB, Stripe customer id, push tokens wagairh store hote hain. **Yahi "app user" ka master row hai.**
+
+**Data flow:** Auth0 (email/password) -> API **`POST /user`** (body email Auth0 se match) -> **`user`** row.
 
 | Column (DB) | Objection (TS) | Notes |
 |-------------|----------------|-------|
@@ -186,6 +214,10 @@ Neeche **primary** columns + FKs; har table par **`migrationDefaults`** wale aud
 
 **Purpose:** dater, activity, restaurant, resy, viator, admin -  questionnaire JSON + metadata.
 
+**Yeh table kya hai:** Har **role / category** ka template - naam, description, aur **profile_questions** (JSON) jisme onboarding form define hai. **User ka data yahan nahi** - sirf "dater ke liye kaun se sawal" jaise definitions.
+
+**Data flow:** **`db:seed`** / admin; mobile mostly **`GET /profiletype`** se list padhta hai.
+
 | Column | TS / Notes |
 |--------|------------|
 | `id` | PK uuid |
@@ -201,6 +233,10 @@ Neeche **primary** columns + FKs; har table par **`migrationDefaults`** wale aud
 ### 7.3 `profile`
 
 **Purpose:** User ki “persona” -  ek user ke multiple types theoretically; app flow often **ek primary profile**.
+
+**Yeh table kya hai:** **`user`** ke andar **ek active persona** - jaise "main dater hoon" with **profile_answers** (questionnaire), photo, about, fee. **Mobile app ka "profile" screen yahi data** hai.
+
+**Data flow:** **`POST /profile`** (userId + profileTypeId) -> row; **`PATCH /profile/answers`** se answers update.
 
 | Column | Notes |
 |--------|-------|
@@ -224,6 +260,10 @@ Neeche **primary** columns + FKs; har table par **`migrationDefaults`** wale aud
 
 **Purpose:** Bookable item -  restaurant / activity / Viator / Wing-owned; **`external_id`** e.g. `resy:…`, `viator:…`.
 
+**Yeh table kya hai:** **Catalog** - "platform par kya-kya book ho sakta hai" (restaurant slot, activity). **Ye booking table nahi hai** - user ne abhi book kiya hai ya nahi, ye **`experience_offering`** mein hota hai. **Offering** = inventory / listing.
+
+**Data flow:** Admin bulk upload, **`wingapp-restaurants-job`** (Resy venues), Viator sync, **`POST /offering`** APIs.
+
 | Column | Notes |
 |--------|-------|
 | `id` | PK |
@@ -242,6 +282,10 @@ Neeche **primary** columns + FKs; har table par **`migrationDefaults`** wale aud
 
 **Purpose:** Physical address; **`profile_id`** and/or **`offering_id`** (nullable).
 
+**Yeh table kya hai:** **Pata** - kisi **offering** (restaurant address) ya **profile** se jude address + coordinates. Search / map / directions ke liye.
+
+**Data flow:** API create/update; Resy sync job **location** rows bhi update karti hai.
+
 | Column | Notes |
 |--------|-------|
 | `id` | PK |
@@ -255,6 +299,10 @@ Originally **`profile_location`** table rename -> **`location`**.
 ### 7.6 `experience`
 
 **Purpose:** User ka “outing” window -  start/end, departure coords, party size, revealed flag, timezone, etc.
+
+**Yeh table kya hai:** User ne jo **ek plan** banaya - "is din is time window mein outing" (dinner + activity mix). **Iske andar multiple `experience_offering` ho sakte hain** (ek restaurant slot + ek activity). **Parent trip / outing container.**
+
+**Data flow:** Mobile booking / search flow -> **`experience`** row phir uske niche **slots** `experience_offering`.
 
 | Column | Notes |
 |--------|-------|
@@ -275,6 +323,10 @@ Originally **`profile_location`** table rename -> **`location`**.
 ### 7.7 `experience_offering`
 
 **Purpose:** Ek experience ke andar **ek slot** -  kaun sa offering, kab, kitna paisa, confirmation status, Stripe transaction link.
+
+**Yeh table kya hai:** **Yahi "booking / reservation" line item hai** - user ne **kaun si `offering`** (catalog item) kis time **book** ki, kitna amount, admin confirm status (`CONFIRMED` wagairh), Stripe **transaction** link. **Mobile app booking success = yahan rows.**
+
+**Data flow:** **`POST /reservation`** / **`POST /reservation/transaction`** flows; admin **`PUT /reservation/confirm`**.
 
 | Column | Notes |
 |--------|-------|
@@ -300,6 +352,10 @@ Originally **`profile_location`** table rename -> **`location`**.
 
 **Purpose:** Stripe PaymentIntent / charge record tied to **`experience_offering`**.
 
+**Yeh table kya hai:** **Payment record** - Stripe id + amounts (subtotal, tax, fee, net) **us booking line (`experience_offering`)** ke liye. **User ka card charge / hold** yahi se trace hota hai.
+
+**Data flow:** **`services/external/stripe.ts`** + reservation / transaction controllers.
+
 | Column | Notes |
 |--------|-------|
 | `id` | PK |
@@ -314,6 +370,10 @@ Originally **`profile_location`** table rename -> **`location`**.
 ### 7.9 `payment_method`
 
 **Purpose:** Stripe Connect / saved payment method per **profile** (provider onboarding pattern).
+
+**Yeh table kya hai:** **Service provider** (restaurant / activity host) ka Stripe **Connected Account** / payout setup - **end-user ke saved cards (`user` table flow) se alag**. Provider payout ke liye.
+
+**Data flow:** **`POST /payment/init`**, **`PATCH /payment/confirm`** (provider profile).
 
 | Column | Notes |
 |--------|-------|
@@ -330,6 +390,10 @@ Originally **`profile_location`** table rename -> **`location`**.
 
 **Purpose:** Scheduled / templated push rows (**`wingapp-notifications-job`** in prod consumes); API writes rows with **`send_at`**, **`time_type`**, etc.
 
+**Yeh table kya hai:** **Push notification queue** - kab bhejna hai (`send_at`), kya text, kis **user** ko, kis **booking** se related. **API rows create karti hai**; **actual phone par bhejna** alag repo **`wingapp-notifications-job`** karta hai.
+
+**Data flow:** **`notification`** service + controllers; scheduled job **read** karke Expo **send** karti hai.
+
 Important columns (initial + many alters): `user_id`, `experience_offering_id`, `experience_id`, `type`, text fields (`title`, `body`, `header`, …), **`send_at`**, **`time_type`**, **`sub_message`**, **`bottom_cta_text`**, **`page_route`**, location fields removed in later migrations -  **exact list** ke liye migrations `notification` grep karo.
 
 **Model:** `NotificationModel` -  relations `user`, `experienceOffering`.
@@ -339,6 +403,10 @@ Important columns (initial + many alters): `user_id`, `experience_offering_id`, 
 ### 7.11 `experience_review`
 
 **Purpose:** Post-experience review answers.
+
+**Yeh table kya hai:** Trip complete hone ke baad user ne jo **rating / feedback** diya - **`experience`** se link.
+
+**Data flow:** Mobile **`POST /experience/:id/review`** jaise endpoints.
 
 | Column | Notes |
 |--------|-------|
@@ -354,6 +422,10 @@ Important columns (initial + many alters): `user_id`, `experience_offering_id`, 
 
 **Purpose:** Third-party enrichment (e.g. Yelp) linked to **`profile_id`**.
 
+**Yeh table kya hai:** **Yelp** se aaya hua raw/cached business data (`profile_data` JSON) - listing enrich karne ke liye. **User signup data nahi** - provider listing enrichment.
+
+**Data flow:** API jab Yelp search karta hai (`/offering/:id/yelp` pattern).
+
 | Column | Notes |
 |--------|-------|
 | `id`, `source`, `online_reservations`, `profile_data` (jsonb) | |
@@ -365,6 +437,10 @@ Important columns (initial + many alters): `user_id`, `experience_offering_id`, 
 ### 7.13 `edit_experience_offering`
 
 **Purpose:** Admin/user initiated **booking change** proposal before confirm.
+
+**Yeh table kya hai:** Pehle **`experience_offering`** (booking) ko **change** karne ka **proposal** - naya time, naya offering, amounts - jab tak user email se confirm na kare.
+
+**Data flow:** Admin **`POST /reservation/edit`**; user **`PATCH /reservation/edit/confirm/:id`** (public link).
 
 | Column | Notes |
 |--------|-------|
@@ -380,6 +456,10 @@ Important columns (initial + many alters): `user_id`, `experience_offering_id`, 
 
 **Purpose:** Multiple users same **`experience`** (guest list).
 
+**Yeh table kya hai:** **Plus-one / guests** - same outing par aur kaun **users** add hain (alag **`user`** rows link).
+
+**Data flow:** Mobile guest join/leave APIs.
+
 | Column | Notes |
 |--------|-------|
 | `user_id`, `experience_id` | composite uniqueness; FK `experience_id` ON DELETE CASCADE |
@@ -391,6 +471,10 @@ Important columns (initial + many alters): `user_id`, `experience_offering_id`, 
 ### 7.15 `restaurant`
 
 **Purpose:** Restaurant-side metadata linked to **`offering`** (Resy flow).
+
+**Yeh table kya hai:** **Resy-linked restaurant** offering ke extra fields - cuisine, average bill, phone, **`offering_id`** se jude. **Catalog detail layer** - **booking** phir bhi `experience_offering` mein.
+
+**Data flow:** **`wingapp-restaurants-job`** upsert; admin **`PATCH /restaurant`**.
 
 | Column | Notes |
 |--------|-------|
@@ -408,6 +492,10 @@ Important columns (initial + many alters): `user_id`, `experience_offering_id`, 
 
 **Purpose:** Admin overrides for Viator product display / mapping.
 
+**Yeh table kya hai:** Viator **product** par **manual overrides** (name, active, product_code) - third-party API data ko **admin** tweak kare.
+
+**Data flow:** Admin UI + **`/viator-activities`** CRUD.
+
 | Column | Notes |
 |--------|-------|
 | `id`, `name`, `product_code`, `active` | |
@@ -419,6 +507,10 @@ Important columns (initial + many alters): `user_id`, `experience_offering_id`, 
 ### 7.17 `terms`
 
 **Purpose:** Terms & conditions versions.
+
+**Yeh table kya hai:** **Legal terms** ke versions - user **`PATCH /user/terms`** se accept karta hai; **`user.accepted_terms_version`** se match.
+
+**Data flow:** Admin / CMS style insert; app **`GET /terms`**.
 
 | Column | Notes |
 |--------|-------|
