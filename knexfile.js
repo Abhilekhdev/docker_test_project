@@ -11,7 +11,7 @@ module.exports = {
       database: process.env.DB_NAME || 'crud-with-postgres'
     },
     pool: {
-      min: 2,
+      min: 2, 
       max: 10
     },
     migrations: { 

@@ -2,7 +2,7 @@ const { Model } = require('objection');
 const knex = require('../config/knex');
 
 // Bind the knex instance to Objection.js
-Model.knex(knex);
+Model.knex(knex); 
  
 class BaseModel extends Model {
   $beforeInsert() {
@@ -11,7 +11,7 @@ class BaseModel extends Model {
 
   $beforeUpdate() {
     this.updated_at = new Date().toISOString();
-  }
+  } 
 }
 
 module.exports = BaseModel;

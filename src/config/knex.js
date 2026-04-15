@@ -12,7 +12,7 @@ const knexConfig = {
   pool: {
     min: 2,
     max: 10
-  },
+  }, 
   migrations: {
     directory: './src/database/migrations'
   },
